@@ -1,10 +1,10 @@
 // NEON HARBOR — a neon-noir open-world crime game in the browser.
 // Original fiction: Rook, a driver-for-hire, climbs the harbor underworld
 // of a coastal city policed by the NHPD. Built fresh for make.fun gta6-01.
-// Three.js is vendored locally (game/vendor/three.module.js); everything below is
+// Three.js is vendored locally (game/vendor/three.module.min.js); everything below is
 // the game's own logic: city, driving, police, missions, shooting, garage,
 // radio, respect, saves, and the screenshot staging modes (?shot=).
-import * as THREE from './vendor/three.module.js';
+import * as THREE from './vendor/three.module.min.js';
 
 const $ = (id) => document.getElementById(id);
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));

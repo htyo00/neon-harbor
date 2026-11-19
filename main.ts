@@ -1,7 +1,7 @@
 // NEON HARBOR — make.fun gta6-01 entry program (Node 22, standard library only).
 // The playable game lives in game/ as plain static files a desktop browser can
 // load offline (game/index.html plus its ES modules and the vendored three.js
-// build under game/vendor/three.module.js). This program hands the entry in: it copies
+// build under game/vendor/three.module.min.js). This program hands the entry in: it copies
 // game/ and screenshots/ from beside this file into the output directory and
 // writes output/dossier.json, the summary the judge reads, using the vendored
 // make.fun library. Run it with MAKEFUN_OUTPUT_DIR set outside the grader:
