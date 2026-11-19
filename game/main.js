@@ -91,12 +91,18 @@ function loadSave() {
 
 // ---------------------------------------------------------------- three setup
 const canvas = $('c');
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: !new URLSearchParams(location.search).has('nofx') });
-const NOFX = new URLSearchParams(location.search).has('nofx');
-renderer.setPixelRatio(NOFX ? 1 : Math.min(devicePixelRatio, 2));
-renderer.setSize(innerWidth, innerHeight);
-renderer.shadowMap.enabled = !NOFX;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+// Perf: no MSAA (brutal under software rendering), fixed pixel ratio 1,
+// and a 0.5x internal render resolution — the canvas CSS still stretches
+// it to the full window, so the picture stays full-screen with 75% fewer
+// pixels shaded per frame.
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: false });
+const RES_SCALE = 0.5;
+renderer.setPixelRatio(1);
+renderer.setSize(Math.round(innerWidth * RES_SCALE), Math.round(innerHeight * RES_SCALE), false);
+// Shadows are the single most expensive pass under SwiftShader (~40% of
+// frame time): off by default, opt back in with ?shadows on a real GPU.
+renderer.shadowMap.enabled = new URLSearchParams(location.search).has('shadows');
+renderer.shadowMap.type = THREE.PCFShadowMap;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.05;
@@ -111,7 +117,7 @@ scene.add(hemi);
 const sun = new THREE.DirectionalLight(0xff8f3d, 2.4);
 sun.position.set(-190, 120, 150);
 sun.castShadow = true;
-sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.mapSize.set(1024, 1024);
 sun.shadow.camera.left = -160; sun.shadow.camera.right = 160;
 sun.shadow.camera.top = 160; sun.shadow.camera.bottom = -160;
 sun.shadow.camera.far = 700;
@@ -177,6 +183,9 @@ ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; world.add(ground)
 // Roads: grid every 80 units, width 16, dark asphalt + center dashes.
 const roadMat = new THREE.MeshLambertMaterial({ color: 0x3a3348 });
 const dashMat = new THREE.MeshBasicMaterial({ color: 0x8a7a3a });
+// All ~364 center dashes as ONE instanced draw call instead of one mesh each.
+const dashDummy = new THREE.Object3D();
+const dashMatrices = [];
 for (let i = -3; i <= 3; i++) {
   const p = i * 80;
   for (const horizontal of [true, false]) {
@@ -185,13 +194,18 @@ for (let i = -3; i <= 3; i++) {
     if (!horizontal) r.rotation.z = Math.PI / 2;
     r.receiveShadow = true; world.add(r);
     for (let d = -CITY + 20; d < CITY; d += 24) {
-      const dash = new THREE.Mesh(new THREE.PlaneGeometry(8, 1.2), dashMat);
-      dash.rotation.x = -Math.PI / 2;
-      dash.position.set(horizontal ? d : p, 0.08, horizontal ? p : d);
-      if (!horizontal) dash.rotation.z = Math.PI / 2;
-      world.add(dash);
+      dashDummy.rotation.set(-Math.PI / 2, 0, horizontal ? 0 : Math.PI / 2);
+      dashDummy.position.set(horizontal ? d : p, 0.08, horizontal ? p : d);
+      dashDummy.updateMatrix();
+      dashMatrices.push(dashDummy.matrix.clone());
     }
   }
+}
+{
+  const dashes = new THREE.InstancedMesh(new THREE.PlaneGeometry(8, 1.2), dashMat, dashMatrices.length);
+  dashes.frustumCulled = false;
+  dashMatrices.forEach((m, i) => dashes.setMatrixAt(i, m));
+  world.add(dashes);
 }
 // Sidewalks: lighter strips along roads.
 const walkMat = new THREE.MeshLambertMaterial({ color: 0x5d5178 });
@@ -211,24 +225,15 @@ const trimMat = new THREE.MeshBasicMaterial({ color: 0xff5da2 });
 const trimMat2 = new THREE.MeshBasicMaterial({ color: 0x37e0ff });
 const palmTrunkMat = new THREE.MeshLambertMaterial({ color: 0x5a3a22 });
 const palmLeafMat = new THREE.MeshLambertMaterial({ color: 0x1f7a3a });
+const palmSpots = []; // palms are built as 2 instanced draws after the city loop
 function addPalm(x, z) {
-  const g = new THREE.Group();
-  const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.55, 9, 6), palmTrunkMat);
-  trunk.position.y = 4.5; trunk.castShadow = true; g.add(trunk);
-  for (let i = 0; i < 6; i++) {
-    const leaf = new THREE.Mesh(new THREE.ConeGeometry(1.1, 4.5, 4), palmLeafMat);
-    const a = (i / 6) * Math.PI * 2;
-    leaf.position.set(Math.cos(a) * 1.6, 9.4, Math.sin(a) * 1.6);
-    leaf.rotation.z = Math.cos(a) * 0.9; leaf.rotation.x = -Math.sin(a) * 0.9;
-    g.add(leaf);
-  }
-  g.position.set(x, 0, z); world.add(g);
+  palmSpots.push({ x, z });
 }
+const trimSpecsA = [], trimSpecsB = []; // roof trims -> 2 instanced draws, built after the garage
 function addBuilding(x, z, w, d, h, ti) {
   const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), new THREE.MeshLambertMaterial({ map: BUILDING_TEX[ti % BUILDING_TEX.length] }));
   m.position.set(x, h / 2, z); m.castShadow = true; m.receiveShadow = true; world.add(m);
-  const trim = new THREE.Mesh(new THREE.BoxGeometry(w + 0.4, 0.5, d + 0.4), (ti % 2 ? trimMat2 : trimMat));
-  trim.position.set(x, h + 0.2, z); world.add(trim);
+  (ti % 2 ? trimSpecsB : trimSpecsA).push({ x, y: h + 0.2, z, w: w + 0.4, d: d + 0.4 });
   colliders.push({ x0: x - w / 2, z0: z - d / 2, x1: x + w / 2, z1: z + d / 2 });
 }
 for (let bx = -3; bx <= 2; bx++) for (let bz = -3; bz <= 2; bz++) {
@@ -240,12 +245,30 @@ for (let bx = -3; bx <= 2; bx++) for (let bz = -3; bz <= 2; bz++) {
   if (Math.random() < 0.5) addPalm(cx - 28, cz + 24);
   if (Math.random() < 0.4) addPalm(cx + 28, cz - 26);
 }
+// Palms: one instanced trunk draw + one instanced leaf draw for the whole city.
+{
+  const trunkMesh = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.35, 0.55, 9, 6), palmTrunkMat, palmSpots.length);
+  const leafMesh = new THREE.InstancedMesh(new THREE.ConeGeometry(1.1, 4.5, 4), palmLeafMat, palmSpots.length * 6);
+  trunkMesh.frustumCulled = false; leafMesh.frustumCulled = false;
+  const dummy = new THREE.Object3D();
+  palmSpots.forEach((s, i) => {
+    dummy.position.set(s.x, 4.5, s.z); dummy.rotation.set(0, 0, 0); dummy.updateMatrix();
+    trunkMesh.setMatrixAt(i, dummy.matrix);
+    for (let k = 0; k < 6; k++) {
+      const a = (k / 6) * Math.PI * 2;
+      dummy.position.set(s.x + Math.cos(a) * 1.6, 9.4, s.z + Math.sin(a) * 1.6);
+      dummy.rotation.set(-Math.sin(a) * 0.9, 0, Math.cos(a) * 0.9); dummy.updateMatrix();
+      leafMesh.setMatrixAt(i * 6 + k, dummy.matrix);
+    }
+  });
+  world.add(trunkMesh); world.add(leafMesh);
+}
 // Billboards on tall poles along the boulevards.
 for (let i = 0; i < 10; i++) {
   const along = [-240, -160, -80, 0, 80, 160, 240][i % 7];
   const side = i % 2 ? 1 : -1;
   const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 14, 6), new THREE.MeshLambertMaterial({ color: 0x333344 }));
-  pole.position.set(along, 7, side * 96); pole.castShadow = true; world.add(pole);
+  pole.position.set(along, 7, side * 96); world.add(pole);
   const board = new THREE.Mesh(new THREE.PlaneGeometry(20, 5), new THREE.MeshBasicMaterial({ map: SIGN_TEX[i % SIGN_TEX.length] }));
   board.position.set(along, 16.5, side * 96);
   board.rotation.y = side > 0 ? 0 : Math.PI;
@@ -254,13 +277,23 @@ for (let i = 0; i < 10; i++) {
 // Streetlights along the main boulevard (z = 0) and the north road.
 const lampMat = new THREE.MeshLambertMaterial({ color: 0x222233 });
 const lampGlow = new THREE.MeshBasicMaterial({ color: 0xffe9a8 });
-for (let x = -280; x <= 280; x += 40) {
-  for (const z of [8, -8]) {
-    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.3, 8, 6), lampMat);
-    pole.position.set(x, 4, z); world.add(pole);
-    const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.45, 8, 6), lampGlow);
-    bulb.position.set(x, 8.2, z); world.add(bulb);
+// Streetlight poles + bulbs as two instanced draws instead of 60 meshes.
+{
+  const poleMesh = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.22, 0.3, 8, 6), lampMat, 30);
+  const bulbMesh = new THREE.InstancedMesh(new THREE.SphereGeometry(0.45, 8, 6), lampGlow, 30);
+  poleMesh.frustumCulled = false; bulbMesh.frustumCulled = false;
+  const dummy = new THREE.Object3D();
+  let li = 0;
+  for (let x = -280; x <= 280; x += 40) {
+    for (const z of [8, -8]) {
+      dummy.position.set(x, 4, z); dummy.rotation.set(0, 0, 0); dummy.updateMatrix();
+      poleMesh.setMatrixAt(li, dummy.matrix);
+      dummy.position.set(x, 8.2, z); dummy.updateMatrix();
+      bulbMesh.setMatrixAt(li, dummy.matrix);
+      li++;
+    }
   }
+  world.add(poleMesh); world.add(bulbMesh);
 }
 // Central plaza fountain + benches.
 const plaza = new THREE.Mesh(new THREE.CylinderGeometry(14, 16, 2, 24), new THREE.MeshLambertMaterial({ color: 0x4a3a6e }));
@@ -281,28 +314,64 @@ COIN_SPOTS.forEach(([x, z], i) => {
 addBuilding(GARAGE_POS.x, GARAGE_POS.z, 34, 22, 12, 1);
 const garageSign = new THREE.Mesh(new THREE.PlaneGeometry(24, 6), new THREE.MeshBasicMaterial({ map: signTexture("GREASE'S", '#12082a', '#7dff9e', 'SPRAY & TUNE') }));
 garageSign.position.set(GARAGE_POS.x, 14, GARAGE_POS.z - 11.2); garageSign.rotation.y = 0; world.add(garageSign);
+// Roof trims: one instanced draw per neon colour for the whole city.
+for (const [mat, specs] of [[trimMat, trimSpecsA], [trimMat2, trimSpecsB]]) {
+  const m = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 0.5, 1), mat, specs.length);
+  m.frustumCulled = false;
+  const dummy = new THREE.Object3D();
+  specs.forEach((s, i) => {
+    dummy.position.set(s.x, s.y, s.z); dummy.scale.set(s.w, 1, s.d); dummy.rotation.set(0, 0, 0); dummy.updateMatrix();
+    m.setMatrixAt(i, dummy.matrix);
+  });
+  world.add(m);
+}
 
 // ---------------------------------------------------------------- vehicles
-function makeCarMesh(color, kind) {
+// Merge same-material geometries into one draw call (a car drops from 8
+// meshes to 4: body, cabin, wheels, headlights).
+function mergeGeoms(list) {
+  const parts = list.map((g) => (g.index ? g.toNonIndexed() : g));
+  let vCount = 0;
+  for (const g of parts) vCount += g.attributes.position.count;
+  const pos = new Float32Array(vCount * 3), nor = new Float32Array(vCount * 3), uv = new Float32Array(vCount * 2);
+  let o = 0;
+  for (const g of parts) {
+    const n = g.attributes.position.count;
+    pos.set(g.attributes.position.array, o * 3);
+    nor.set(g.attributes.normal.array, o * 3);
+    if (g.attributes.uv) uv.set(g.attributes.uv.array, o * 2);
+    o += n;
+  }
+  const out = new THREE.BufferGeometry();
+  out.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  out.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+  out.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  return out;
+}
+function makeCarMesh(color, kind, shadow = true) {
   const g = new THREE.Group();
   const bodyMat = new THREE.MeshLambertMaterial({ color });
   const glassMat = new THREE.MeshLambertMaterial({ color: 0x0e1a2a });
   const body = new THREE.Mesh(new THREE.BoxGeometry(kind === 'van' ? 2.4 : 2.1, 0.85, kind === 'van' ? 5.4 : 4.6), bodyMat);
-  body.position.y = 0.75; body.castShadow = true; g.add(body);
+  body.position.y = 0.75; if (shadow) body.castShadow = true; g.add(body);
   const cabinH = kind === 'van' ? 1.1 : 0.7;
   const cabin = new THREE.Mesh(new THREE.BoxGeometry(1.9, cabinH, kind === 'van' ? 3.4 : 2.2), glassMat);
-  cabin.position.set(0, 1.45, kind === 'van' ? -0.3 : -0.2); cabin.castShadow = true; g.add(cabin);
+  cabin.position.set(0, 1.45, kind === 'van' ? -0.3 : -0.2); if (shadow) cabin.castShadow = true; g.add(cabin);
   const wheelGeo = new THREE.CylinderGeometry(0.42, 0.42, 0.35, 10);
   const wheelMat = new THREE.MeshLambertMaterial({ color: 0x111111 });
+  const wheels = [];
   for (const [wx, wz] of [[-1.05, 1.5], [1.05, 1.5], [-1.05, -1.5], [1.05, -1.5]]) {
-    const w = new THREE.Mesh(wheelGeo, wheelMat);
-    w.rotation.z = Math.PI / 2; w.position.set(wx, 0.42, wz); g.add(w);
+    const w = wheelGeo.clone().rotateZ(Math.PI / 2);
+    w.translate(wx, 0.42, wz); wheels.push(w);
   }
+  g.add(new THREE.Mesh(mergeGeoms(wheels), wheelMat));
   const lightMat = new THREE.MeshBasicMaterial({ color: 0xfff2b0 });
+  const lights = [];
   for (const s of [-1, 1]) {
-    const hl = new THREE.Mesh(new THREE.BoxGeometry(0.45, 0.22, 0.12), lightMat);
-    hl.position.set(s * 0.7, 0.8, 2.32); g.add(hl);
+    const hl = new THREE.BoxGeometry(0.45, 0.22, 0.12);
+    hl.translate(s * 0.7, 0.8, 2.32); lights.push(hl);
   }
+  g.add(new THREE.Mesh(mergeGeoms(lights), lightMat));
   return g;
 }
 const TRAFFIC_COLORS = [0xd8d8d8, 0x222831, 0xc0392b, 0x2471a3, 0xf1c40f, 0x7d3c98, 0x16a085, 0xe67e22];
@@ -310,7 +379,7 @@ const traffic = [];
 function spawnTrafficCar(x, z, axis, dir) {
   const kind = Math.random() < 0.12 ? 'van' : (Math.random() < 0.18 ? 'taxi' : 'car');
   const color = kind === 'taxi' ? 0xf7c948 : TRAFFIC_COLORS[randi(0, TRAFFIC_COLORS.length - 1)];
-  const mesh = makeCarMesh(color, kind);
+  const mesh = makeCarMesh(color, kind, false);
   mesh.position.set(x, 0, z); world.add(mesh);
   const t = { mesh, axis, dir, speed: rand(9, 16), kind, x, z };
   traffic.push(t); return t;
@@ -328,12 +397,12 @@ playerCar.mesh.rotation.y = playerCar.heading;
 world.add(playerCar.mesh);
 
 // Player character (on foot): low-poly figure in a neon jacket.
-function makePersonMesh(jacket, pants) {
+function makePersonMesh(jacket, pants, shadow = true) {
   const g = new THREE.Group();
   const torso = new THREE.Mesh(new THREE.BoxGeometry(0.9, 1.1, 0.5), new THREE.MeshLambertMaterial({ color: jacket }));
-  torso.position.y = 1.35; torso.castShadow = true; g.add(torso);
+  torso.position.y = 1.35; if (shadow) torso.castShadow = true; g.add(torso);
   const head = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.55, 0.5), new THREE.MeshLambertMaterial({ color: 0xe8b98a }));
-  head.position.y = 2.2; head.castShadow = true; g.add(head);
+  head.position.y = 2.2; if (shadow) head.castShadow = true; g.add(head);
   const hair = new THREE.Mesh(new THREE.BoxGeometry(0.54, 0.2, 0.54), new THREE.MeshLambertMaterial({ color: 0x1a1a1a }));
   hair.position.y = 2.5; g.add(hair);
   for (const s of [-1, 1]) {
@@ -348,24 +417,59 @@ const player = { mesh: makePersonMesh(0xff5da2, 0x222831), x: 0, z: -30, heading
 player.mesh.position.set(player.x, 0, player.z);
 world.add(player.mesh);
 
-// Pedestrians strolling the sidewalks.
+// Pedestrians strolling the sidewalks — one instanced draw per body part
+// instead of 7 meshes per pedestrian (26 peds: 182 draws -> 5).
 const peds = [];
 const PED_COLORS = [0x37e08b, 0x9be7ff, 0xffd23e, 0xff9f43, 0x7b5cff, 0xffffff];
-for (let i = 0; i < 26; i++) {
+const PED_N = 26;
+const pedTorso = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshLambertMaterial({ color: 0xffffff }), PED_N);
+const pedHead = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshLambertMaterial({ color: 0xe8b98a }), PED_N);
+const pedHair = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshLambertMaterial({ color: 0x1a1a1a }), PED_N);
+const pedLegs = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshLambertMaterial({ color: 0x333344 }), PED_N * 2);
+const pedArms = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshLambertMaterial({ color: 0xffffff }), PED_N * 2);
+for (const m of [pedTorso, pedHead, pedHair, pedLegs, pedArms]) { m.instanceMatrix.setUsage(THREE.DynamicDrawUsage); m.frustumCulled = false; world.add(m); }
+for (let i = 0; i < PED_N; i++) {
   const road = randi(-3, 3) * 80;
   const along = rand(-280, 280);
   const axis = Math.random() < 0.5 ? 'x' : 'z';
-  const m = makePersonMesh(PED_COLORS[randi(0, PED_COLORS.length - 1)], 0x333344);
-  m.position.set(axis === 'x' ? along : road + 12, 0, axis === 'x' ? road + 12 : along);
-  m.scale.setScalar(rand(0.9, 1.1));
-  world.add(m);
-  peds.push({ mesh: m, axis, dir: Math.random() < 0.5 ? 1 : -1, speed: rand(1.2, 2.4), road });
+  const color = PED_COLORS[randi(0, PED_COLORS.length - 1)];
+  const scale = rand(0.9, 1.1);
+  pedTorso.setColorAt(i, new THREE.Color(color));
+  pedArms.setColorAt(i * 2, new THREE.Color(color));
+  pedArms.setColorAt(i * 2 + 1, new THREE.Color(color));
+  peds.push({ axis, dir: Math.random() < 0.5 ? 1 : -1, speed: rand(1.2, 2.4), road, x: axis === 'x' ? along : road + 12, z: axis === 'x' ? road + 12 : along, scale });
 }
+if (pedTorso.instanceColor) pedTorso.instanceColor.needsUpdate = true;
+if (pedArms.instanceColor) pedArms.instanceColor.needsUpdate = true;
+const _pedQ = new THREE.Quaternion(), _pedUp = new THREE.Vector3(0, 1, 0);
+const _pedM = new THREE.Matrix4(), _partM = new THREE.Matrix4(), _tmpM = new THREE.Matrix4();
+const _pv = new THREE.Vector3(), _sv = new THREE.Vector3(), _qv = new THREE.Quaternion();
+function refreshPedInstances() {
+  peds.forEach((p, i) => {
+    const heading = p.axis === 'x' ? (p.dir > 0 ? Math.PI / 2 : -Math.PI / 2) : (p.dir > 0 ? 0 : Math.PI);
+    _pedQ.setFromAxisAngle(_pedUp, heading);
+    _pedM.compose(_pv.set(p.x, 0, p.z), _pedQ, _sv.set(p.scale, p.scale, p.scale));
+    const put = (mesh, idx, ox, oy, oz, sx, sy, sz) => {
+      _partM.compose(_pv.set(ox, oy, oz), _qv.identity(), _sv.set(sx, sy, sz));
+      _tmpM.multiplyMatrices(_pedM, _partM);
+      mesh.setMatrixAt(idx, _tmpM);
+    };
+    put(pedTorso, i, 0, 1.35, 0, 0.9, 1.1, 0.5);
+    put(pedHead, i, 0, 2.2, 0, 0.5, 0.55, 0.5);
+    put(pedHair, i, 0, 2.5, 0, 0.54, 0.2, 0.54);
+    put(pedLegs, i * 2, -0.22, 0.45, 0, 0.32, 0.9, 0.36);
+    put(pedLegs, i * 2 + 1, 0.22, 0.45, 0, 0.32, 0.9, 0.36);
+    put(pedArms, i * 2, -0.58, 1.35, 0, 0.24, 0.9, 0.28);
+    put(pedArms, i * 2 + 1, 0.58, 1.35, 0, 0.24, 0.9, 0.28);
+  });
+  for (const m of [pedTorso, pedHead, pedHair, pedLegs, pedArms]) m.instanceMatrix.needsUpdate = true;
+}
+refreshPedInstances();
 
 // Police cruisers.
 const police = [];
 function makePoliceMesh() {
-  const g = makeCarMesh(0x1a1a2e, 'car');
+  const g = makeCarMesh(0x1a1a2e, 'car', false);
   const barMat = new THREE.MeshBasicMaterial({ color: 0xff2222 });
   const bar = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.18, 0.5), barMat);
   bar.position.set(0, 1.95, -0.2); g.add(bar);
@@ -388,7 +492,7 @@ const heli = { mesh: null, cone: null, light: null, active: false };
 {
   const g = new THREE.Group();
   const body = new THREE.Mesh(new THREE.BoxGeometry(2.6, 1.6, 5.2), new THREE.MeshLambertMaterial({ color: 0x1a2a44 }));
-  body.castShadow = true; g.add(body);
+  g.add(body);
   const tail = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.7, 4.5), new THREE.MeshLambertMaterial({ color: 0x1a2a44 }));
   tail.position.set(0, 0.3, -4.2); g.add(tail);
   const rotor = new THREE.Mesh(new THREE.BoxGeometry(11, 0.12, 0.7), new THREE.MeshLambertMaterial({ color: 0x222222 }));
@@ -466,7 +570,7 @@ $('btnclosemap').onclick = () => toggleMap();
 $('btnclosegarage').onclick = () => closeGarage();
 $('btnretry').onclick = () => { location.reload(); };
 addEventListener('resize', () => {
-  renderer.setSize(innerWidth, innerHeight);
+  renderer.setSize(Math.round(innerWidth * RES_SCALE), Math.round(innerHeight * RES_SCALE), false);
   camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
 });
 
@@ -878,7 +982,7 @@ function endGame(kind, text) {
 
 // ---------------------------------------------------------------- game loop
 const clock = new THREE.Clock();
-let fpsFrames = 0, fpsTime = 0, fpsValue = 0;
+let fpsFrames = 0, fpsTime = performance.now(), fpsValue = 0, hudT = 1;
 window.__errors = [];
 addEventListener('error', (e) => window.__errors.push(String(e.message || e.error)));
 const tmpV = new THREE.Vector3();
@@ -1140,9 +1244,10 @@ function updateWorld(dt) {
   if (S.radioT > 45) { S.radioT = 0; S.song = (S.song + 1) % STATIONS[S.radio].songs.length; }
   // peds stroll
   for (const p of peds) {
-    if (p.axis === 'x') { p.mesh.position.x += p.dir * p.speed * dt; if (Math.abs(p.mesh.position.x) > CITY) p.dir *= -1; p.mesh.rotation.y = p.dir > 0 ? Math.PI / 2 : -Math.PI / 2; }
-    else { p.mesh.position.z += p.dir * p.speed * dt; if (Math.abs(p.mesh.position.z) > CITY) p.dir *= -1; p.mesh.rotation.y = p.dir > 0 ? 0 : Math.PI; }
+    if (p.axis === 'x') { p.x += p.dir * p.speed * dt; if (Math.abs(p.x) > CITY) p.dir *= -1; }
+    else { p.z += p.dir * p.speed * dt; if (Math.abs(p.z) > CITY) p.dir *= -1; }
   }
+  refreshPedInstances();
 }
 function updateCamera(dt) {
   const tx = S.inCar ? playerCar.x : player.x;
@@ -1166,13 +1271,20 @@ function tick() {
     updateEnemies(dt);
     updateWorld(dt);
     updateCamera(dt);
-    updateHUD();
+    // HUD text is cheap to compute but expensive to push to the DOM every
+    // frame; ~7 refreshes a second reads exactly the same to the player.
+    hudT += dt;
+    if (hudT >= 0.15) { hudT = 0; updateHUD(); }
   }
   renderer.render(scene, camera);
-  fpsFrames++; fpsTime += dt;
-  if (fpsTime >= 1) {
-    fpsValue = Math.round(fpsFrames / fpsTime);
-    fpsFrames = 0; fpsTime = 0;
+  // Real FPS: count frames against wall-clock time. The old code divided by
+  // the simulation dt, which is clamped to 0.05s — at a true 2 FPS it
+  // reported ~20. Never use the clamped dt for the FPS readout.
+  fpsFrames++;
+  const nowMs = performance.now();
+  if (nowMs - fpsTime >= 1000) {
+    fpsValue = Math.round((fpsFrames * 1000) / (nowMs - fpsTime));
+    fpsFrames = 0; fpsTime = nowMs;
     window.__fps = fpsValue;
     $('fps').textContent = fpsValue + ' FPS';
   }
