@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NEON HARBOR — Make GTA 6</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #1a0f2e; font-family: 'Segoe UI', Arial, sans-serif; color: #fff; }
+  #c { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+  .panel { background: rgba(12, 8, 28, 0.78); border: 1px solid rgba(255, 120, 200, 0.35); border-radius: 10px; padding: 10px 12px; backdrop-filter: blur(3px); }
+  .hidden { display: none !important; }
+  /* top right cluster */
+  #topright { position: fixed; top: 12px; right: 12px; text-align: right; z-index: 20; pointer-events: none; }
+  #stars { font-size: 30px; letter-spacing: 4px; color: #ffd23e; text-shadow: 0 0 12px rgba(255, 210, 62, .8); }
+  #stars.blink { animation: blink .5s steps(2) infinite; }
+  @keyframes blink { 50% { opacity: .25; } }
+  #cash { font-size: 26px; font-weight: 800; color: #7dff9e; text-shadow: 0 2px 6px #000; }
+  #rep { font-size: 14px; font-weight: 700; color: #ffb3e2; }
+  #clock { font-size: 15px; font-weight: 700; color: #ffe9a8; }
+  #radio { font-size: 13px; color: #9be7ff; margin-top: 2px; }
+  #fps { font-size: 11px; color: #aaa; margin-top: 2px; }
+  /* mission card top left */
+  #mission { position: fixed; top: 12px; left: 12px; width: 320px; z-index: 20; pointer-events: none; }
+  #mission h2 { margin: 0 0 2px; font-size: 15px; color: #ffd23e; letter-spacing: 1px; }
+  #mission .npc { font-size: 12px; color: #9be7ff; font-weight: 700; }
+  #mission .obj { font-size: 14px; margin: 4px 0 6px; line-height: 1.35; }
+  #mission .bar { height: 8px; background: #332; border-radius: 4px; overflow: hidden; }
+  #mission .bar > div { height: 100%; background: linear-gradient(90deg, #ff5da2, #ffd23e); width: 0%; }
+  #mission .next { font-size: 12px; color: #cbb; margin-top: 5px; }
+  #mission .timer { font-size: 16px; font-weight: 800; color: #ff6b6b; }
+  /* dispatch panel */
+  #dispatch { position: fixed; top: 178px; left: 12px; width: 320px; z-index: 20; pointer-events: none; font-size: 13px; }
+  #dispatch h3 { margin: 0 0 6px; font-size: 12px; letter-spacing: 1px; color: #ff8fb3; }
+  #dispatch .unit { display: flex; justify-content: space-between; padding: 3px 0; border-top: 1px solid rgba(255,255,255,.08); }
+  #dispatch .unit b { color: #ffe9a8; }
+  #dispatch .st-PURSUIT { color: #ff6b6b; font-weight: 800; }
+  #dispatch .st-RAMMING { color: #ff9f43; font-weight: 800; }
+  #dispatch .st-SEARCHING { color: #9be7ff; font-weight: 700; }
+  #dispatch .st-SPOTLIGHT { color: #ffd23e; font-weight: 800; }
+  #dispatch .st-ROADBLOCK { color: #ff5da2; font-weight: 800; }
+  #dispatch .st-FIRING { color: #ff3b3b; font-weight: 800; }
+  #dispatch .more { color: #aaa; font-size: 12px; margin-top: 4px; }
+  /* bottom left: health + ammo */
+  #vitals { position: fixed; left: 12px; bottom: 12px; z-index: 20; pointer-events: none; }
+  #healthbar { width: 200px; height: 12px; background: #332; border-radius: 6px; overflow: hidden; }
+  #healthbar > div { height: 100%; background: linear-gradient(90deg, #37e08b, #a5ff6b); width: 100%; }
+  #ammo { font-size: 22px; font-weight: 800; margin-top: 6px; text-shadow: 0 2px 4px #000; }
+  #ammo small { font-size: 14px; color: #bbb; }
+  #weaponname { font-size: 13px; color: #ffb3e2; font-weight: 700; }
+  /* vehicle card bottom right */
+  #vehicle { position: fixed; right: 12px; bottom: 12px; width: 240px; z-index: 20; pointer-events: none; text-align: right; }
+  #vehicle h3 { margin: 0; font-size: 16px; color: #ffe9a8; }
+  #vehicle .cond { font-size: 13px; color: #7dff9e; }
+  #vehicle .speed { font-size: 34px; font-weight: 900; line-height: 1; }
+  #vehicle .gear { font-size: 13px; color: #9be7ff; }
+  /* crosshair */
+  #cross { position: fixed; left: 50%; top: 50%; width: 26px; height: 26px; margin: -13px 0 0 -13px; z-index: 25; pointer-events: none; }
+  #cross::before, #cross::after { content: ''; position: absolute; background: #fff; box-shadow: 0 0 4px #000; }
+  #cross::before { left: 12px; top: 0; width: 2px; height: 26px; }
+  #cross::after { left: 0; top: 12px; width: 26px; height: 2px; }
+  /* dialog box */
+  #dialog { position: fixed; left: 50%; bottom: 110px; transform: translateX(-50%); width: 560px; max-width: 92vw; z-index: 30; display: flex; gap: 12px; align-items: flex-start; }
+  #portrait { width: 64px; height: 64px; border-radius: 50%; flex: none; display: flex; align-items: center; justify-content: center; font-size: 26px; font-weight: 900; border: 3px solid #ffd23e; }
+  #dialog .who { font-size: 13px; color: #ffd23e; font-weight: 800; letter-spacing: 1px; }
+  #dialog .line { font-size: 16px; line-height: 1.4; margin-top: 2px; }
+  /* district banner */
+  #district { position: fixed; left: 50%; top: 22%; transform: translateX(-50%); z-index: 22; text-align: center; pointer-events: none; opacity: 0; transition: opacity .4s; }
+  #district.show { opacity: 1; }
+  #district h1 { margin: 0; font-size: 44px; letter-spacing: 6px; text-shadow: 0 0 24px rgba(255, 93, 162, .9), 0 2px 4px #000; }
+  #district p { margin: 0; font-size: 15px; color: #ffe9a8; letter-spacing: 2px; }
+  /* toast */
+  #toast { position: fixed; left: 50%; top: 64px; transform: translateX(-50%); z-index: 26; font-size: 18px; font-weight: 800; color: #7dff9e; text-shadow: 0 2px 6px #000; pointer-events: none; }
+  /* weapon wheel */
+  #wheel { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 300px; height: 300px; z-index: 28; pointer-events: none; }
+  #wheel .slot { position: absolute; width: 92px; height: 92px; border-radius: 50%; background: rgba(12,8,28,.85); border: 2px solid rgba(255,255,255,.4); display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; text-align: center; }
+  #wheel .slot.sel { border-color: #ffd23e; box-shadow: 0 0 18px rgba(255,210,62,.8); }
+  #wheel .slot.locked { opacity: .45; }
+  #wheel .slot .ico { font-size: 26px; }
+  /* overlays: title / map / garage / pause / end */
+  .overlay { position: fixed; inset: 0; z-index: 40; display: flex; align-items: center; justify-content: center; background: rgba(10, 4, 26, 0.82); }
+  .overlay .box { width: 760px; max-width: 94vw; max-height: 92vh; overflow: auto; background: linear-gradient(160deg, #2a1048, #12082a); border: 2px solid #ff5da2; border-radius: 16px; padding: 24px 28px; }
+  .overlay h1 { margin: 0 0 4px; font-size: 40px; letter-spacing: 4px; color: #ff5da2; text-shadow: 0 0 22px rgba(255,93,162,.7); }
+  .overlay h1 span { color: #ffd23e; }
+  .overlay h2 { color: #ffd23e; margin: 14px 0 6px; font-size: 17px; letter-spacing: 1px; }
+  .roster { display: flex; gap: 12px; margin: 10px 0; }
+  .roster .char { flex: 1; text-align: center; background: rgba(255,255,255,.06); border-radius: 10px; padding: 10px 4px; }
+  .roster .face { width: 56px; height: 56px; border-radius: 50%; margin: 0 auto 6px; display: flex; align-items: center; justify-content: center; font-size: 24px; font-weight: 900; border: 2px solid #ffd23e; }
+  .roster .nm { font-weight: 800; font-size: 14px; }
+  .roster .rl { font-size: 12px; color: #9be7ff; }
+  .btn { display: inline-block; background: linear-gradient(90deg, #ff5da2, #ff9f43); color: #fff; border: none; border-radius: 8px; padding: 12px 26px; font-size: 17px; font-weight: 800; cursor: pointer; margin: 8px 8px 0 0; letter-spacing: 1px; }
+  .btn.ghost { background: rgba(255,255,255,.12); }
+  .keys { font-size: 14px; line-height: 1.9; columns: 2; }
+  .keys b { color: #ffd23e; background: rgba(255,255,255,.1); border-radius: 4px; padding: 1px 7px; margin-right: 4px; }
+  #mapwrap { display: flex; gap: 18px; }
+  #mapcanvas { width: 380px; height: 380px; background: #0c0620; border: 1px solid #ff5da2; border-radius: 8px; flex: none; }
+  #maplist { flex: 1; font-size: 14px; line-height: 1.5; }
+  #maplist .done { color: #7dff9e; } #maplist .next { color: #ffd23e; font-weight: 800; } #maplist .locked { color: #888; }
+  .shoprow { display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-top: 1px solid rgba(255,255,255,.12); font-size: 15px; }
+  .statbar { height: 10px; background: #332; border-radius: 5px; overflow: hidden; width: 160px; display: inline-block; vertical-align: middle; }
+  .statbar > div { height: 100%; background: linear-gradient(90deg, #37e08b, #ffd23e); }
+  #endtitle { font-size: 56px; letter-spacing: 8px; }
+  #prompt { position: fixed; left: 50%; bottom: 200px; transform: translateX(-50%); z-index: 24; font-size: 17px; font-weight: 800; background: rgba(12,8,28,.8); border: 1px solid #ffd23e; border-radius: 8px; padding: 8px 16px; pointer-events: none; }
+  #status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+</style>
+</head>
+<body>
+<canvas id="c" aria-label="NEON HARBOR: open-world crime game in a neon coastal city"></canvas>
+<p id="status" role="status" aria-live="polite"></p>
+
+<div id="topright">
+  <div id="stars">☆☆☆☆☆</div>
+  <div id="cash">$0</div>
+  <div id="rep">REP 0/250 · ROOKIE</div>
+  <div id="clock">DAY 1 · 18:48</div>
+  <div id="radio">HARBOR FM 98.1 — Neon Tide — "Sunset Over the Piers"</div>
+  <div id="fps"></div>
+</div>
+
+<div id="mission" class="panel">
+  <h2 id="mtitle">JOB 1/6 · FIRST WHEEL</h2>
+  <div class="npc" id="mnpc">FIXER VERA</div>
+  <div class="obj" id="mobj">Steal a car and bring it to the green marker.</div>
+  <div class="bar"><div id="mbar"></div></div>
+  <div class="next" id="mnext">NEXT: Harbor Run — $800</div>
+  <div class="timer hidden" id="mtimer"></div>
+</div>
+
+<div id="dispatch" class="panel hidden">
+  <h3 id="dtitle">NHPD RESPONSE — 0 UNITS · CODE 1</h3>
+  <div id="dunits"></div>
+  <div class="more" id="dmore"></div>
+</div>
+
+<div id="vitals">
+  <div id="healthbar"><div id="healthfill"></div></div>
+  <div id="ammo">— <small>/ —</small></div>
+  <div id="weaponname">FISTS</div>
+</div>
+
+<div id="vehicle" class="panel hidden">
+  <h3 id="vname">—</h3>
+  <div class="cond" id="vcond">CONDITION 100%</div>
+  <div class="speed"><span id="vspeed">0</span> <small style="font-size:14px">MPH</small></div>
+  <div class="gear" id="vgear">GEAR 1 · NITRO READY</div>
+</div>
+
+<div id="cross" class="hidden"></div>
+<div id="prompt" class="hidden"></div>
+<div id="toast"></div>
+
+<div id="district"><h1 id="dname">DOWNTOWN</h1><p id="dsub">NEON HARBOR</p></div>
+
+<div id="dialog" class="panel hidden">
+  <div id="portrait">V</div>
+  <div><div class="who" id="dwho">VERA · FIXER</div><div class="line" id="dline"></div></div>
+</div>
+
+<div id="wheel" class="hidden">
+  <div class="slot" data-w="0" style="left:104px;top:0"><span class="ico">✊</span>FISTS<br><small>∞</small></div>
+  <div class="slot" data-w="1" style="left:204px;top:104px"><span class="ico">🔫</span>PISTOL<br><small id="wammo1"></small></div>
+  <div class="slot" data-w="2" style="left:104px;top:204px"><span class="ico">💥</span>SMG<br><small id="wammo2"></small></div>
+  <div class="slot locked" data-w="3" style="left:4px;top:104px"><span class="ico">🔒</span>SHOTGUN<br><small>LOCKED</small></div>
+  <div class="slot locked" data-w="4" style="left:104px;top:104px"><span class="ico">🔒</span>RIFLE<br><small>LOCKED</small></div>
+</div>
+
+<div id="title" class="overlay">
+  <div class="box">
+    <h1>NEON <span>HARBOR</span></h1>
+    <p style="margin:0;color:#9be7ff">A neon-noir open-world crime story. You are <b style="color:#ffd23e">ROOK</b>, driver-for-hire, climbing the harbor underworld one job at a time.</p>
+    <h2>THE CREW</h2>
+    <div class="roster">
+      <div class="char"><div class="face" style="background:#ff5da2">R</div><div class="nm">ROOK</div><div class="rl">You · Driver</div></div>
+      <div class="char"><div class="face" style="background:#7b5cff">V</div><div class="nm">VERA</div><div class="rl">Fixer</div></div>
+      <div class="char"><div class="face" style="background:#37b6e0">D</div><div class="nm">DETECTIVE DIAL</div><div class="rl">NHPD Dispatch</div></div>
+      <div class="char"><div class="face" style="background:#ff9f43">M</div><div class="nm">MARROW</div><div class="rl">Dockside Boss</div></div>
+      <div class="char"><div class="face" style="background:#37e08b">G</div><div class="nm">GREASE</div><div class="rl">Garage Owner</div></div>
+    </div>
+    <h2>HOW TO PLAY</h2>
+    <div class="keys">
+      <div><b>↑ ↓ ← →</b> drive / walk</div>
+      <div><b>E</b> enter car · steal · interact</div>
+      <div><b>Mouse + Click</b> aim &amp; shoot</div>
+      <div><b>Q / 1–5</b> weapon wheel</div>
+      <div><b>F</b> punch</div>
+      <div><b>R</b> change radio station</div>
+      <div><b>Shift</b> nitro</div>
+      <div><b>Space</b> brake</div>
+      <div><b>M</b> map</div>
+      <div><b>P / Esc</b> pause</div>
+    </div>
+    <div id="continue" style="margin-top:12px;font-size:15px;color:#7dff9e"></div>
+    <button class="btn" id="btnstart">▶ START ENGINE</button>
+    <button class="btn ghost" id="btncontinue">↻ CONTINUE</button>
+    <p style="font-size:12px;color:#aaa;margin-top:10px">6 story missions · 4-star NHPD dispatch · helicopter &amp; roadblocks · weapon wheel · on-foot shootouts · garage upgrades · respect ranks · saves · radio. Original fiction — not affiliated with any commercial game.</p>
+  </div>
+</div>
+
+<div id="mapov" class="overlay hidden">
+  <div class="box" style="width:820px">
+    <h1 style="font-size:28px">MAP — <span>NEON HARBOR</span></h1>
+    <div id="mapwrap">
+      <canvas id="mapcanvas" width="380" height="380"></canvas>
+      <div id="maplist"></div>
+    </div>
+    <button class="btn" id="btnclosemap">CLOSE [M]</button>
+  </div>
+</div>
+
+<div id="garageov" class="overlay hidden">
+  <div class="box" style="width:640px">
+    <h1 style="font-size:28px">GREASE'S <span>SPRAY &amp; TUNE</span></h1>
+    <p style="margin:0;color:#9be7ff">GREASE · Garage Owner — "Your ride, my rules. Cash up front."</p>
+    <div id="shoprows"></div>
+    <h2>YOUR RIDE</h2>
+    <div id="carstats" style="font-size:14px;line-height:2"></div>
+    <button class="btn" id="btnclosegarage">LEAVE [Esc]</button>
+  </div>
+</div>
+
+<div id="pauseov" class="overlay hidden">
+  <div class="box" style="width:480px;text-align:center">
+    <h1 style="font-size:32px">PAUSED</h1>
+    <p>NEON HARBOR — take a breath, Rook.</p>
+    <button class="btn" id="btnresume">RESUME [P]</button>
+  </div>
+</div>
+
+<div id="endov" class="overlay hidden">
+  <div class="box" style="width:520px;text-align:center">
+    <h1 id="endtitle">WASTED</h1>
+    <p id="endtext"></p>
+    <button class="btn" id="btnretry">↻ TRY AGAIN</button>
+  </div>
+</div>
+
+<script type="module" src="./main.js"></script>
+</body>
+</html>
